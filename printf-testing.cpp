@@ -1,9 +1,8 @@
 #include <stdio.h>
-#include <stdlib.h> 
 
-int _my_printf(const char *text);
+extern "C" { int _my_printf(const char *format, ...) __attribute__ ((format (printf, 1, 2))); };
 
-int main(int argc, char *argv[]) {
+int main() {
 
     _my_printf("aboba");
     return 0;

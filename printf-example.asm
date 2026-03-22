@@ -2,50 +2,49 @@ global __start
 global _my_printf
 
 extern GetStdHandle
-import GetStdHandle  kernel32.dll
-
 extern WriteConsoleA
-import WriteConsoleA kernel32.dll
-
 extern ExitProcess
-import ExitProcess   kernel32.dll
 
-section .code
+section .text
 
-..start:    
-        push dword Text
+__start:    
+        mov rcx, Text
         call _my_printf
 
-        xor eax, eax
-        push eax                ; ExitCode = 0
-        call [ExitProcess]      ; ExitProcess (0)
-
+        leave
+        ret
 
 _my_printf: 
-        mov eax, [esp+4]        ; address of format string
+        push rbp
+        mov rdx, rcx            ; address of format string
 
-        xor edx, edx
-        push edx                ; Resvd = 0
-        push edx                ; Ptr to number of chars written = NULL
+        xor r9, r9 
+        ;mov qword [rsp+32], 0  ; lpReserved = NULL
+        ;mov r8, TextLen
 
-        mov edx, TextLen
-        push edx 
+        mov rcx, -11            ; STD_OUTPUT_HANDLE = -11
+        call GetStdHandle       ; stdout = rax = GetStdHandle (STD_OUTPUT_HANDLE = -11)
+        mov rcx, rax            ; rcx = stdout
 
-        ;push ax
-        push eax
+    write_one_symbol:
+        mov rbp, rdx            ; saving rdx
+        push rcx                ; saving rcx
+        mov r8, 1               ; output 1 symbol
+        call WriteConsoleA
 
-        push dword -11          ; STD_OUTPUT_HANDLE = -11
-        call [GetStdHandle]     ; stdout = eax = GetStdHandle (STD_OUTPUT_HANDLE = -11)
+        mov bl, [rbp]
+        mov rdx, rbp
+        inc rdx                 ; going to next symbol
+        pop rcx
+        cmp bl, 0
+        jne write_one_symbol
 
-        push eax 
+        pop rbp
+        leave
+        ret
 
-        call [WriteConsoleA]
+section .data   ; пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ .data
 
-        xor eax, eax
-        push eax                ; ExitCode = 0
-        call [ExitProcess]      ; ExitProcess (0)
-
-;section .data   ; определение секции .data
-
-Text            db "Shalom world", 0ah, 0
-TextLen         equ $ - Text
+buffer:         times 100 db 0
+Text            db "Shalow world", 0
+TextLen         equ $ - buffer
