@@ -1,4 +1,3 @@
-global __start
 global _my_printf
 
 extern GetStdHandle
@@ -7,15 +6,17 @@ extern ExitProcess
 
 section .text
 
-__start:    
-        mov rcx, Text
-        call _my_printf
-
-        leave
-        ret
-
 ;-----------------------
-;
+; printf function, that writes string based on format-string (1st arg) in standard output
+;have microsoft-64 call type
+;1st arg - format string, included specifies:
+;   %d - signed int
+;   %c - char
+;   %s - string
+;   %b - binary 
+;   %x - unsigned hex
+;   %o - unsigned oct
+;2nd + args - argument for specifies
 ;-----------------------
 _my_printf: 
         push rbp
@@ -36,6 +37,27 @@ _my_printf:
         xor r8, r8               ; r8 start value
         mov rsi, buffer         ; buffer current pos
 
+        call write_string_to_buffer
+
+    end_program:
+        call print_buffer_and_free
+
+        pop rbx                 ; saving regs
+        pop rdi
+        pop rsi
+        pop rbp
+    
+        ret
+;-----------------------
+
+
+
+;-----------------------
+; writing string that should be outputted in buffer
+;entry: rsi - buffer ptr
+;       r8 - count of symbols in buffer
+;-----------------------
+write_string_to_buffer:
     write_one_symbol:
         xor rbx, rbx
         mov bl, [rdx]           ; bl - current symbol
@@ -61,42 +83,39 @@ _my_printf:
         cmp bl, 0               ; checking end of string
         jne write_one_symbol
         
-        jmp end_program         ; jumping to end
+        ret                     ; jumping to end
 
     check_percent:
         inc rdx                 
         xor rbx, rbx
-        mov bl, [rdx]
+        mov bl, [rdx]           ; getting symbol after '%'
 
-        cmp bl, '%'
+        inc rdx                 ; next symbol -> after % and char
+
+        cmp bl, '%'             ; if %%
         je just_percent_printf
 
-        cmp bl, 'b'
+        cmp bl, 'b'             ; if symbol doesn`t 'fit' jmp table
         jb write_one_symbol
         
         sub bl, 'b'
         mov rax, jmp_table
         jmp [rax + rbx * 8]
 
-    end_program:
-
-        mov rcx, -11            ; STD_OUTPUT_HANDLE = -11
-        call GetStdHandle       ; stdout = rax = GetStdHandle (STD_OUTPUT_HANDLE = -11)
-        mov rcx, rax            ; rcx = stdout
-
-        xor r9, r9              ; address to write num of printed = 0
-        mov rdx, buffer
-        push qword 0            ; reserver 0
-        call WriteConsoleA
-        add rsp, 8
-
-        pop rbx                 ; saving regs
-        pop rdi
-        pop rsi
-        pop rbp
-    
         ret
 ;-----------------------
+
+
+jmp_table       dq binary_printf_arg
+                dq char_printf_arg
+                dq signed_int_printf_arg
+                times ('o' - 'd' - 1) dq unknown_printf_arg
+                dq unsigned_oct_int_printf_arg
+                times ('s' - 'o' - 1) dq unknown_printf_arg
+                dq string_printf_arg
+                times ('x' - 's' - 1) dq unknown_printf_arg
+                dq unsigned_hex_int_printf_arg
+
 
 
 ;-----------------------
@@ -108,14 +127,16 @@ _my_printf:
 ;destroy:   rbx 
 ;return:    r10 - next argument pos
 ;-----------------------
-_char_printf_arg:
+char_printf_arg:
         mov rbx, [rbp + r10 * 8] 
         mov [rsi], bl
 
         inc r10                 ; next element in stack
+        inc rsi
+        inc r8
         
         mov bl, 'c'             ; см описание подобного в %s
-        jmp check_before_loop
+        jmp write_one_symbol
 ;-----------------------
 
 
@@ -130,8 +151,9 @@ _char_printf_arg:
 ;destroy:   rax | bl
 ;return:    r10 - next argument pos
 ;           r8 += num of characters written
+;           rsi - next free pos in buffer
 ;-----------------------
-_string_printf_arg:
+string_printf_arg:
         mov rax, [rbp + r10 * 8]     ; string arg address
         inc r10
     
@@ -156,13 +178,22 @@ _string_printf_arg:
         jne write_one_symbol_from_arg
 
         mov bl, 's'             ; бля ну там короче оно прыгает на проверку того, что у меня строка не коничилась, а она кончилась если тут 0 лежит поэтому надо чет другое запихнуть да это костыль
-        jmp check_before_loop
+        jmp write_one_symbol
 
 ;-----------------------
 
 
 ;-----------------------
-%macro write_num_from_buffer_macro 0
+; write string from num_buffer to general buffer 
+;entry: rdi - num buffer prt
+;       rsi - general buffer ptr
+;       r9 - num buffer size
+;       r8 - curr characters written in buffer
+;destroy:   bl | r9 | rdi
+;return:    r8 += num of characters written 
+;           rsi - next free pos in buffer
+;-----------------------
+write_num_from_buffer:
     .write_num_from_buffer_cycle
         mov bl, [rdi]
         mov [rsi], bl
@@ -173,7 +204,7 @@ _string_printf_arg:
 
         inc r8                      ; num of characters written +1
         cmp r8, BUFFER_SIZE
-        ja .free_buffer
+        jae .free_buffer
         jmp .continue_cycle
 
     .free_buffer:
@@ -183,8 +214,9 @@ _string_printf_arg:
         cmp r9, 0
         jne .write_num_from_buffer_cycle
 
-%endmacro
+        ret
 ;-----------------------
+
 
 
 ;-----------------------
@@ -197,6 +229,7 @@ _string_printf_arg:
 ;destroy:   rax | rbx | r9 | rdi | rsi
 ;return:    r10 - next argument pos
 ;           r8 += num of characters written
+;           rsi - next free pos in buffer
 ;-----------------------
 binary_printf_arg:
         xor rax, rax
@@ -223,10 +256,10 @@ binary_printf_arg:
         dec r9                    ; cause we added 1 one more time then needed
         dec rdi
     
-        write_num_from_buffer_macro
+        call write_num_from_buffer
 
         mov bl, 'b'
-        jmp check_before_loop
+        jmp write_one_symbol
 ;-----------------------
 
 
@@ -241,6 +274,7 @@ binary_printf_arg:
 ;destroy:   rax | rbx | r9 | rdi | rsi
 ;return:    r10 - next argument pos
 ;           r8 += num of characters written
+;           rsi - next free pos in buffer
 ;-----------------------
 signed_int_printf_arg:
         xor rax, rax
@@ -283,10 +317,10 @@ signed_int_printf_arg:
         dec rdi
     
         xchg rbx, rdx  
-        write_num_from_buffer_macro
+        call write_num_from_buffer
 
         mov bl, 'd'
-        jmp check_before_loop
+        jmp write_one_symbol
 ;-----------------------
 
 
@@ -301,6 +335,7 @@ signed_int_printf_arg:
 ;destroy:   rax | rbx | r9 | rdi | rsi | rcx
 ;return:    r10 - next argument pos
 ;           r8 += num of characters written
+;           rsi - next free pos in buffer
 ;-----------------------
 unsigned_hex_int_printf_arg:
         xor rax, rax
@@ -328,14 +363,15 @@ unsigned_hex_int_printf_arg:
         dec r9                    ; cause we added 1 one more time then needed
         dec rdi
     
-        write_num_from_buffer_macro
+        call write_num_from_buffer
 
         mov bl, 'x'
-        jmp check_before_loop
+        jmp write_one_symbol
 ;-----------------------
 
 
 
+; объединить с binary 
 ;-----------------------
 ; %o
 ;moving num from stack to buffer as oct
@@ -372,10 +408,10 @@ unsigned_oct_int_printf_arg:
         dec r9                    ; cause we added 1 one more time then needed
         dec rdi
     
-        write_num_from_buffer_macro
+        call write_num_from_buffer
 
         mov bl, 'o'
-        jmp check_before_loop
+        jmp write_one_symbol
         jmp write_one_symbol
 ;-----------------------
 
@@ -387,23 +423,37 @@ unsigned_oct_int_printf_arg:
 ;-----------------------
 unknown_printf_arg:
         mov [rsi], '?'
-        jmp check_before_loop
+
+        inc rsi
+        inc r8
+
+        jmp write_one_symbol
 ;-----------------------
 
 
 
 ;-----------------------
+; %%
 ;if there is %%
 ;function writes '%'
 ;-----------------------
 just_percent_printf:
         mov [rsi], '%'
 
-        jmp check_before_loop
+        inc rsi
+        inc r8
+
+        jmp write_one_symbol
 ;-----------------------
 
 
 
+;-----------------------
+;printout buffer to standard output and free it after
+;entry: r8 - count of characters to write from buffer 
+;destroy:   -
+;return:    rsi - ptr to buffer start
+;           r8 - 0
 ;-----------------------
 print_buffer_and_free:
         push rbx
@@ -413,7 +463,7 @@ print_buffer_and_free:
         push rcx
         push rdx
 
-        mov rcx, -11            ; STD_OUTPUT_HANDLE = -11
+        mov rcx, STD_OUTPUT_HANDLE           ; STD_OUTPUT_HANDLE = -11
         call GetStdHandle       ; stdout = rax = GetStdHandle (STD_OUTPUT_HANDLE = -11)
         mov rcx, rax            ; rcx = stdout
 
@@ -448,24 +498,13 @@ print_buffer_and_free:
 
 
 
-section .data   ; пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ .data
+section .data   
 
-BUFFER_SIZE equ 10
+STD_OUTPUT_HANDLE   equ -11
+BUFFER_SIZE         equ 100
 
-buffer:         times BUFFER_SIZE db 0
-Text            db "Shalow world", 0
-TextLen         equ $ - Text
+buffer          times BUFFER_SIZE db 0
 
-jmp_table       dq binary_printf_arg
-                dq _char_printf_arg
-                dq signed_int_printf_arg
-                times ('o' - 'd' - 1) dq unknown_printf_arg
-                dq unsigned_oct_int_printf_arg
-                times ('s' - 'o' - 1) dq unknown_printf_arg
-                dq _string_printf_arg
-                times ('x' - 's' - 1) dq unknown_printf_arg
-                dq unsigned_hex_int_printf_arg
+buffer_for_num  times BUFFER_SIZE db 0   ; 10 is max len of num in C (not fo ocs, i don`t care about ocs)
 
 numbers_array   db "0123456789abcdef"
-
-buffer_for_num  times 10 db 0   ; 10 is max len of num in C (not fo ocs, i don`t care about ocs)
