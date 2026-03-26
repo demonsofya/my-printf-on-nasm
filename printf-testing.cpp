@@ -1,12 +1,13 @@
-//#include "Txlib.h"
 #include <stdio.h>
 
 extern "C" { int _my_printf(const char *format, ...) __attribute__ ((format (printf, 1, 2))); };
 
 int main() {
+    printf("%d %s %x %d%%%c%b\n%d %s %x %d%%%c%b\n", -1, "love", 3802, 100, 33, -1, "love", 3802, 100, 33, 30);
 
-    _my_printf("aboba |%s|%c|%c|%c|%c|%c| aboba %x %o aboba\n", "aboba", 'a', 'b', 'o', 'b', 'a', 123, 123);
+    //_my_printf("aboba |%s|%c|%c|%c|%c|%c| aboba %x %o %b %d %d aboba\n", "aboba", 'a', 'b', 'o', 'b', 'a', 123, 123, 123, 123, -123);
 
-    printf("x2aboba");
+    _my_printf ("%d %s %x %d%%%c%b\n%d %s %x %d%%%c%b\n", -1, "love", 3802, 100, 33, 30, -1, "love", 3802, 100, 33, 30);
+
     return 0;
 }
