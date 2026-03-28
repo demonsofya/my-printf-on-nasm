@@ -133,7 +133,9 @@ section .data
 jmp_table       dq binary_printf_arg
                 dq char_printf_arg
                 dq signed_int_printf_arg
-                times ('o' - 'd' - 1) dq unknown_printf_arg
+                times ('f' - 'd' - 1) dq unknown_printf_arg
+                dq signed_double_printf_arg
+                times ('o' - 'f' - 1) dq unknown_printf_arg
                 dq unsigned_oct_int_printf_arg
                 times ('s' - 'o' - 1) dq unknown_printf_arg
                 dq string_printf_arg
@@ -414,6 +416,70 @@ unsigned_binary_oct_hex_printf_arg:
 
 
 ;-----------------------
+; %f
+;
+;-----------------------
+signed_double_printf_arg:
+        xor rax, rax
+        cvttsd2si rax, xmm0
+        
+        mov rbx, rdx
+        mov rdi, buffer_for_num
+        mov ecx, 10
+        mov r9, 1
+
+    .print_int_part:
+        xor rdx, rdx
+        div ecx                     ; rax = rax / 10, rdx = rax % 10
+
+        add dl, '0'
+        mov [rdi], dl
+
+        inc r9
+        inc rdi
+
+        cmp eax, 0
+        jne .print_int_part
+
+        call write_num_from_buffer
+
+        inc rsi
+        mov [rsi], '.'
+        inc rsi
+
+        mov edx, 10d
+        movd xmm1, edx
+
+        dec r9                    ; cause we added 1 one more time then needed
+        dec rdi
+
+
+        mov rdi, 6
+
+    .print_float_part:
+        mulsd xmm0, [rel num]
+        cvttsd2si rax, xmm0
+
+        xor rdx, rdx
+        div ecx   
+        add dl, '0'
+        mov [rsi], dl
+
+        inc r8
+        inc rsi
+        
+        dec rdi 
+        cmp rdi, 0
+        jne .print_float_part
+
+        mov rdx, rbx
+
+        jmp write_one_symbol
+;-----------------------
+
+
+
+;-----------------------
 ;if there is no case in jump-table
 ;function writes '?'
 ;-----------------------
@@ -500,6 +566,8 @@ section .data
 
 STD_OUTPUT_HANDLE   equ -11
 BUFFER_SIZE         equ 100
+
+num dq 10.0
 
 buffer          times BUFFER_SIZE db 0
 
