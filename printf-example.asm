@@ -3,6 +3,7 @@ global _my_printf
 extern GetStdHandle
 extern WriteConsoleA
 extern ExitProcess
+extern printf
 
 section .text
 
@@ -31,6 +32,9 @@ _my_printf:
         push rsi                ; saving called-saved regs
         push rdi
         push rbx
+        push r12
+
+        push rcx
         
         mov r10, 3              ; current offset of bp
 
@@ -42,11 +46,29 @@ _my_printf:
     end_program:
         call print_buffer_and_free
 
+
+        mov rdx, [rbp + 24d]               ; old values of arguments
+        mov r8,  [rbp + 32d]               ;
+        mov r9,  [rbp + 40d]               ; 
+
+        mov [rbp + 24d], 0               ; move second argument before ret addr
+        mov [rbp + 32d], 0                ; move third argument before ret addr
+        mov [rbp + 40d], 0                ; move fourth argument before ret addr
+
+        pop rcx                             ; format string 
+
+        pop r12
         pop rbx                 ; saving regs
         pop rdi
         pop rsi
-        pop rbp
-    
+        pop rbp 
+
+        pop rbp                 ; адрес возврата сохраняем у себя
+
+        call printf 
+
+        ;add rsp, 24d
+        push rbp
         ret
 ;-----------------------
 
@@ -98,12 +120,14 @@ write_string_to_buffer:
         cmp bl, 'b'             ; if symbol doesn`t 'fit' jmp table
         jb write_one_symbol
         
-        sub bl, 'b'
+        ;sub bl, 'b'
         mov rax, jmp_table
-        jmp [rax + rbx * 8]
+        jmp [rax + (rbx - 'b') * 8]
 
         ret
 ;-----------------------
+
+section .data  
 
 
 jmp_table       dq binary_printf_arg
@@ -117,6 +141,7 @@ jmp_table       dq binary_printf_arg
                 dq unsigned_hex_int_printf_arg
 
 
+section .text
 
 ;-----------------------
 ; %c
@@ -220,51 +245,6 @@ write_num_from_buffer:
 
 
 ;-----------------------
-; %b
-;moving num from stack to buffer as a binary
-;entry: r10 - curr _my_printf argument offset
-;       r8  - curr characters written in buffer 
-;       rsi - curr buffer pos
-;       rbp - sp in the beginning of the func (average rbp usage)
-;destroy:   rax | rbx | r9 | rdi | rsi
-;return:    r10 - next argument pos
-;           r8 += num of characters written
-;           rsi - next free pos in buffer
-;-----------------------
-binary_printf_arg:
-        xor rax, rax
-        mov eax, [rbp + r10 * 8]     ; int arg
-        inc r10
-
-        mov r9, 1                   ; count of characters in number
-        mov rdi, buffer_for_num     ; curr position in buffer_for_num
-
-    .write_one_binary_num_to_num_buffer:
-        mov rbx, rax                ; to save rax from changing
-        and rbx, 01h                ; rbx = rbx % 2
-
-        add bl, '0'
-        mov [rdi], bl               ; '0' or '1'
-
-        inc r9
-        inc rdi
-
-        shr rax, 1                  ; rax /= 2
-        cmp rax, 0
-        jne .write_one_binary_num_to_num_buffer
-
-        dec r9                    ; cause we added 1 one more time then needed
-        dec rdi
-    
-        call write_num_from_buffer
-
-        mov bl, 'b'
-        jmp write_one_symbol
-;-----------------------
-
-
-
-;-----------------------
 ; %d
 ;moving num from stack to buffer as a signed int
 ;entry: r10 - curr _my_printf argument offset
@@ -326,6 +306,27 @@ signed_int_printf_arg:
 
 
 ;-----------------------
+; %b
+;moving num from stack to buffer as a binary
+;entry: r10 - curr _my_printf argument offset
+;       r8  - curr characters written in buffer 
+;       rsi - curr buffer pos
+;       rbp - sp in the beginning of the func (average rbp usage)
+;destroy:   rax | rbx | r9 | rdi | rsi
+;return:    r10 - next argument pos
+;           r8 += num of characters written
+;           rsi - next free pos in buffer
+;-----------------------
+binary_printf_arg:
+        mov r11, 01h
+        mov cl, 1
+
+        jmp unsigned_binary_oct_hex_printf_arg
+;-----------------------
+
+
+
+;-----------------------
 ; %x
 ;moving num from stack to buffer as a hex
 ;entry: r10 - curr _my_printf argument offset
@@ -338,40 +339,14 @@ signed_int_printf_arg:
 ;           rsi - next free pos in buffer
 ;-----------------------
 unsigned_hex_int_printf_arg:
-        xor rax, rax
-        mov eax, [rbp + r10 * 8]     ; int arg
-        inc r10
+        mov r11, 0fh
+        mov cl, 4
 
-        mov r9, 1                   ; count of characters in number
-        mov rdi, buffer_for_num     ; curr position in buffer_for_num
-        mov rcx, numbers_array      ; start of numbers_array
-
-    .write_one_hex_num_to_num_buffer:
-        mov rbx, rax                ; to save rax from changing
-        and rbx, 0fh                ; rbx = rbx % 16
-
-        mov bl, [rcx + rbx * 1]    ; right position in numbers array
-        mov [rdi], bl
-
-        inc r9
-        inc rdi
-
-        shr rax, 4                  ; rax /= 16
-        cmp rax, 0
-        jne .write_one_hex_num_to_num_buffer
-
-        dec r9                    ; cause we added 1 one more time then needed
-        dec rdi
-    
-        call write_num_from_buffer
-
-        mov bl, 'x'
-        jmp write_one_symbol
+        jmp unsigned_binary_oct_hex_printf_arg
 ;-----------------------
 
 
 
-; объединить с binary 
 ;-----------------------
 ; %o
 ;moving num from stack to buffer as oct
@@ -384,34 +359,55 @@ unsigned_hex_int_printf_arg:
 ;           r8 += num of characters written
 ;-----------------------
 unsigned_oct_int_printf_arg:
+        mov r11, 7
+        mov cl, 3
+
+        jmp unsigned_binary_oct_hex_printf_arg
+;-----------------------
+
+
+;-----------------------
+;moving num for stuck buffer 
+;symbol in num is from 0 to r11, multiplier for next num is 2^r12
+;entry: r10 - curr _my_printf argument offset
+;       r8  - curr characters written in buffer 
+;       rsi - curr buffer pos
+;       rbp - sp in the beginning of the func (average rbp usage)
+;       r11 - mask for num
+;       cl - arg fo shr
+;destroy:   rax | rbx | r9 | rdi | rsi
+;return:    r10 - next argument pos
+;           r8 += num of characters written
+;-----------------------
+unsigned_binary_oct_hex_printf_arg:
         xor rax, rax
         mov eax, [rbp + r10 * 8]     ; int arg
         inc r10
 
         mov r9, 1                   ; count of characters in number
         mov rdi, buffer_for_num     ; curr position in buffer_for_num
+        mov r12, numbers_array      ; start of numbers_array
 
-    .write_one_hex_oct_to_num_buffer:
+    .write_one_hex_num_to_num_buffer:
         mov rbx, rax                ; to save rax from changing
-        and rbx, 7                  ; rbx = rbx % 8
+        and rbx, r11                ; rbx = rbx % 16
 
-        add bl, '0'
-        mov [rdi], bl               ; cause it is from '0' to '7' - cannot be letter
+        mov bl, [r12 + rbx * 1]    ; right position in numbers array
+        mov [rdi], bl
 
         inc r9
         inc rdi
 
-        shr rax, 3                  ; rax /= 8
+        shr qword rax, cl                  ; rax /= 16
         cmp rax, 0
-        jne .write_one_hex_oct_to_num_buffer
+        jne .write_one_hex_num_to_num_buffer
 
         dec r9                    ; cause we added 1 one more time then needed
         dec rdi
     
         call write_num_from_buffer
 
-        mov bl, 'o'
-        jmp write_one_symbol
+        mov bl, 'x'
         jmp write_one_symbol
 ;-----------------------
 
@@ -456,6 +452,7 @@ just_percent_printf:
 ;           r8 - 0
 ;-----------------------
 print_buffer_and_free:
+        push r12
         push rbx
         push r9
         push r10
@@ -492,6 +489,7 @@ print_buffer_and_free:
         pop r10
         pop r9
         pop rbx
+        pop r12
 
         ret
 ;-----------------------
