@@ -420,13 +420,39 @@ unsigned_binary_oct_hex_printf_arg:
 ;
 ;-----------------------
 signed_double_printf_arg:
+        cmp r10, 3
+        je .first_double_arg
+
+        cmp r10, 4
+        je .second_double_arg
+
+        cmp r10, 5
+        je .third_double_arg
+
+        movq xmm0, [rbp + r10 * 8]     ; int arg
+        jmp .put_floor_double_in_rax
+
+    .first_double_arg:
+        movq xmm0, xmm1
+        jmp .put_floor_double_in_rax
+
+    .second_double_arg
+        movq xmm0, xmm2
+        jmp .put_floor_double_in_rax
+
+    .third_double_arg
+        movq xmm0, xmm3
+
+    .put_floor_double_in_rax:
+        inc r10
+
         xor rax, rax
-        cvttsd2si rax, xmm0
+        cvttsd2si rax, xmm0         ; rax = floor(xmm0)
         
-        mov rbx, rdx
-        mov rdi, buffer_for_num
-        mov ecx, 10
-        mov r9, 1
+        mov r11, rdx                ; saving rdx
+        mov rdi, buffer_for_num     
+        mov ecx, 10d                 ; for div
+        mov r9, 1                   ; counter of buffer for num size
 
     .print_int_part:
         xor rdx, rdx
@@ -435,7 +461,7 @@ signed_double_printf_arg:
         add dl, '0'
         mov [rdi], dl
 
-        inc r9
+        inc r9                      ; next pos in buffer for num
         inc rdi
 
         cmp eax, 0
@@ -446,6 +472,8 @@ signed_double_printf_arg:
         inc rsi
         mov [rsi], '.'
         inc rsi
+        inc r8
+        inc r8
 
         mov edx, 10d
         movd xmm1, edx
@@ -453,12 +481,11 @@ signed_double_printf_arg:
         dec r9                    ; cause we added 1 one more time then needed
         dec rdi
 
-
         mov rdi, 6
 
     .print_float_part:
-        mulsd xmm0, [rel num]
-        cvttsd2si rax, xmm0
+        mulsd xmm0, [rel num]      ; num = 10.0
+        cvttsd2si rax, xmm0        ; rax = floor(xmm0 * 10)
 
         xor rdx, rdx
         div ecx   
@@ -467,13 +494,23 @@ signed_double_printf_arg:
 
         inc r8
         inc rsi
+
+        cmp r8, BUFFER_SIZE
+        jae .free_buffer
+        jmp .continue_cycle
+
+    .free_buffer:
+        call print_buffer_and_free
+
+    .continue_cycle:
         
         dec rdi 
-        cmp rdi, 0
+        cmp rdi, 0                  ; checking if we ended to print num
         jne .print_float_part
 
-        mov rdx, rbx
+        mov rdx, r11                ; saving rdx
 
+        mov bl, 'f'                 ; to continue printf after
         jmp write_one_symbol
 ;-----------------------
 
