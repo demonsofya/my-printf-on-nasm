@@ -1,5 +1,7 @@
 #include <stdio.h>
 
+#include <math.h>
+
 extern "C" { int _my_printf(const char *format, ...) __attribute__ ((format (printf, 1, 2))); };
 
 int main() {
@@ -11,7 +13,7 @@ int main() {
 
     //_my_printf ("%d %s %x %d%%%c \n%d %s %x %d%%%c%b | my printf\n", -1, "love", 3802, 100, 33, -1, "love", 3802, 100, 33, 30);
 
-    _my_printf("%d %d %d %f \n", 123, 123, 123, 123.456789);
+    _my_printf("%d %f %f %f %f\n", 123, NAN, INFINITY, 123.456789, -123.456789);
 
     //_my_printf ("%d %s %x %d%%%c%b\n%d %s %x %d%%%c%b | my printf\n%d %s %x %d%%%c%b\n%d %s %x %d%%%c%b | my printf\n", -1, "love", 3802, 100, 33, 30, -1, "love", 3802, 100, 33, 30, -1, "love", 3802, 100, 33, 30, -1, "love", 3802, 100, 33, 30);
 

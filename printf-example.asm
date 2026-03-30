@@ -417,41 +417,25 @@ unsigned_binary_oct_hex_printf_arg:
 
 ;-----------------------
 ; %f
-;
+;moving double num to buffer
+;entry: r10 - curr _my_printf argument offset
+;       r8  - curr characters written in buffer 
+;       rsi - curr buffer pos
+;       rbp - sp in the beginning of the func (average rbp usage)
+;destroy:   rax | rbx | r9 | rdi | rsi | xmm0 | xmm1
+;return:    r10 - next argument pos
+;           r8 += num of characters written
 ;-----------------------
 signed_double_printf_arg:
-        cmp r10, 3
-        je .first_double_arg
+        jmp check_if_double_inf_nan_signed
 
-        cmp r10, 4
-        je .second_double_arg
-
-        cmp r10, 5
-        je .third_double_arg
-
-        movq xmm0, [rbp + r10 * 8]     ; int arg
-        jmp .put_floor_double_in_rax
-
-    .first_double_arg:
-        movq xmm0, xmm1
-        jmp .put_floor_double_in_rax
-
-    .second_double_arg
-        movq xmm0, xmm2
-        jmp .put_floor_double_in_rax
-
-    .third_double_arg
-        movq xmm0, xmm3
-
-    .put_floor_double_in_rax:
-        inc r10
-
+    start_print_double_printf_arg:
         xor rax, rax
         cvttsd2si rax, xmm0         ; rax = floor(xmm0)
         
         mov r11, rdx                ; saving rdx
         mov rdi, buffer_for_num     
-        mov ecx, 10d                 ; for div
+        mov ecx, 10d                ; for div
         mov r9, 1                   ; counter of buffer for num size
 
     .print_int_part:
@@ -478,24 +462,24 @@ signed_double_printf_arg:
         mov edx, 10d
         movd xmm1, edx
 
-        dec r9                    ; cause we added 1 one more time then needed
+        dec r9                      ; cause we added 1 one more time then needed
         dec rdi
 
         mov rdi, 6
 
     .print_float_part:
-        mulsd xmm0, [rel num]      ; num = 10.0
-        cvttsd2si rax, xmm0        ; rax = floor(xmm0 * 10)
+        mulsd xmm0, [rel num]       ; num = 10.0
+        cvttsd2si rax, xmm0         ; rax = floor(xmm0 * 10)
 
         xor rdx, rdx
-        div ecx   
+        div ecx                     ; dl =  floor(xmm0 * 10) % 10
         add dl, '0'
-        mov [rsi], dl
+        mov [rsi], dl               ; printing curr symbol in buffer
 
         inc r8
-        inc rsi
+        inc rsi                     ; next pos in buffer
 
-        cmp r8, BUFFER_SIZE
+        cmp r8, BUFFER_SIZE         ; checking if we have space in buffer
         jae .free_buffer
         jmp .continue_cycle
 
@@ -503,7 +487,6 @@ signed_double_printf_arg:
         call print_buffer_and_free
 
     .continue_cycle:
-        
         dec rdi 
         cmp rdi, 0                  ; checking if we ended to print num
         jne .print_float_part
@@ -512,6 +495,105 @@ signed_double_printf_arg:
 
         mov bl, 'f'                 ; to continue printf after
         jmp write_one_symbol
+;-----------------------
+
+
+
+;-----------------------
+;checking double on specific values
+;   if it is nan, print "nan" as value and jmp on next printf cycle iteration
+;   if it is inf, print "nan" as value and jmp on next printf cycle iteration
+;   if it is signed, print '-' in buffer and mov sign bit of xmm0 to 0
+;entry: r10 - curr _my_printf argument offset
+;       r8  - curr characters written in buffer 
+;       rsi - curr buffer pos
+;       rbp - sp in the beginning of the func (average rbp usage)
+;destroy:       rax | rdi | bl |           
+;return value:  xmm0 - non-signed value of double argument
+;               r10 - num of next arg to printf
+;               r8 += num of characters written
+;-----------------------
+check_if_double_inf_nan_signed:
+        cmp r10, 3
+        je .first_double_arg
+
+        cmp r10, 4
+        je .second_double_arg
+
+        cmp r10, 5
+        je .third_double_arg
+
+        movq xmm0, [rbp + r10 * 8]  ; if double is in stack
+        jmp .check_if_double_is_nan_inf_neg
+
+    .first_double_arg:
+        movq xmm0, xmm1
+        jmp .check_if_double_is_nan_inf_neg
+
+    .second_double_arg
+        movq xmm0, xmm2
+        jmp .check_if_double_is_nan_inf_neg
+
+    .third_double_arg
+        movq xmm0, xmm3
+
+    .check_if_double_is_nan_inf_neg:
+        inc r10
+
+        movq rax, xmm0              ; moving bits of xmm0 to rax to change them
+        mov rdi, [rel nan_bit_mask]
+        and rax, rdi
+        cmp rax, rdi                ; if rax = 0<11...1>{eleven ones}0...0{something}
+        je .inf_or_nan_number
+        jmp .check_if_negative
+
+    .inf_or_nan_number
+        movq rax, xmm0
+        not rdi                     ; rdi = 1<00...0>{eleven zeros}1..1
+        and rax, rdi                ; checking inf or nun
+        mov rdi, NAN_INF_STRING_LEN
+        cmp rax, 0
+        je .inf_number
+
+        mov rax, nan_string 
+        jmp .printf_string_to_buffer
+
+    .inf_number:
+        mov rax, inf_string
+
+    .printf_string_to_buffer:
+        mov bl, [rax]               ; rax - string to print
+        mov [rsi], bl 
+
+        inc rsi
+        inc rax 
+        inc r8
+
+        dec rdi                     ; rdi - string len counter
+        jnz .printf_string_to_buffer
+
+        mov bl, 'f'                 ; to continue printf after
+        jmp write_one_symbol
+
+    .check_if_negative
+        movq rax, xmm0
+        mov rdi, [rel first_bit_mask]
+        and rax, rdi
+        cmp rax, 0
+        je start_print_double_printf_arg
+
+    .signed_num:
+        mov [rsi], '-'
+        inc r8
+        inc rsi 
+
+        movq rax, xmm0             
+        mov rdi, [rel first_bit_mask]
+        not rdi
+        and rax, rdi
+        movq xmm0, rax              ; moving to xmm0 xmm0 value without sign
+
+        jmp start_print_double_printf_arg
 ;-----------------------
 
 
@@ -606,8 +688,20 @@ BUFFER_SIZE         equ 100
 
 num dq 10.0
 
+first_bit_mask dq 1 << 63
+
+nan_bit_mask dq 011111111111b << 52
+
+
+negative_mask dq -1
+
 buffer          times BUFFER_SIZE db 0
 
 buffer_for_num  times BUFFER_SIZE db 0   ; 10 is max len of num in C (not fo ocs, i don`t care about ocs)
 
 numbers_array   db "0123456789abcdef"
+
+nan_string      db "nan"
+inf_string      db "inf"
+
+NAN_INF_STRING_LEN  equ 3
