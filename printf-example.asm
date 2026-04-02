@@ -5,6 +5,9 @@ extern WriteConsoleA
 extern ExitProcess
 extern printf
 
+extern get_double_printf_arg_C_func
+extern get_normal_double_arg
+
 section .text
 
 ;-----------------------
@@ -17,7 +20,8 @@ section .text
 ;   %b - binary 
 ;   %x - unsigned hex
 ;   %o - unsigned oct
-;2nd + args - argument for specifies
+;2nd+ args - argument for specifies
+;   saving and destroy args based on microsoft-64 call type
 ;-----------------------
 _my_printf: 
         push rbp
@@ -78,6 +82,10 @@ _my_printf:
 ; writing string that should be outputted in buffer
 ;entry: rsi - buffer ptr
 ;       r8 - count of symbols in buffer
+;destroy:   rbx | rax
+;return:    r10 - next argument pos
+;           r8 += num of characters written
+;           rsi - next free pos in buffer
 ;-----------------------
 write_string_to_buffer:
     write_one_symbol:
@@ -120,7 +128,6 @@ write_string_to_buffer:
         cmp bl, 'b'             ; if symbol doesn`t 'fit' jmp table
         jb write_one_symbol
         
-        ;sub bl, 'b'
         mov rax, jmp_table
         jmp [rax + (rbx - 'b') * 8]
 
@@ -129,19 +136,18 @@ write_string_to_buffer:
 
 section .data  
 
-
 jmp_table       dq binary_printf_arg
                 dq char_printf_arg
                 dq signed_int_printf_arg
                 times ('f' - 'd' - 1) dq unknown_printf_arg
                 dq signed_double_printf_arg
-                times ('o' - 'f' - 1) dq unknown_printf_arg
+                dq double_exponent_printf_arg
+                times ('o' - 'g' - 1) dq unknown_printf_arg
                 dq unsigned_oct_int_printf_arg
                 times ('s' - 'o' - 1) dq unknown_printf_arg
                 dq string_printf_arg
                 times ('x' - 's' - 1) dq unknown_printf_arg
                 dq unsigned_hex_int_printf_arg
-
 
 section .text
 
@@ -153,6 +159,8 @@ section .text
 ;       rbp - sp in the beginning of the func (average rbp usage)
 ;destroy:   rbx 
 ;return:    r10 - next argument pos
+;           r8 += num of characters written
+;           rsi - next free pos in buffer
 ;-----------------------
 char_printf_arg:
         mov rbx, [rbp + r10 * 8] 
@@ -208,6 +216,7 @@ string_printf_arg:
         jmp write_one_symbol
 
 ;-----------------------
+
 
 
 ;-----------------------
@@ -368,6 +377,7 @@ unsigned_oct_int_printf_arg:
 ;-----------------------
 
 
+
 ;-----------------------
 ;moving num for stuck buffer 
 ;symbol in num is from 0 to r11, multiplier for next num is 2^r12
@@ -427,7 +437,7 @@ unsigned_binary_oct_hex_printf_arg:
 ;           r8 += num of characters written
 ;-----------------------
 signed_double_printf_arg:
-        jmp check_if_double_inf_nan_signed
+        jmp check_if_double_inf_nan_signed_proc ; getting double arg in xmm0 and checking if it is nan-inf-signed
 
     start_print_double_printf_arg:
         xor rax, rax
@@ -465,7 +475,7 @@ signed_double_printf_arg:
         dec r9                      ; cause we added 1 one more time then needed
         dec rdi
 
-        mov rdi, 6
+        mov rdi, COUNT_OF_SYMBOLS_AFTER_DOT                  ; TODO: constant
 
     .print_float_part:
         mulsd xmm0, [rel num]       ; num = 10.0
@@ -498,6 +508,51 @@ signed_double_printf_arg:
 ;-----------------------
 
 
+;-----------------------
+;%g 
+; calling C function, which write nan, inf, %f or calling printf function with %g if double arg is more then 1e6 or less then 1e-3
+;entry: r10 - curr _my_printf argument offset
+;       r8  - curr characters written in buffer 
+;       rsi - curr buffer pos
+;       rbp - sp in the beginning of the func (average rbp usage)
+;destroy:       rax | rdi | bl |           
+;return:  xmm0 - non-signed value of double argument
+;         r10 - num of next arg to printf
+;         r8 += num of characters written
+;-----------------------
+double_exponent_printf_arg:
+        call get_double_printf_arg
+        call print_buffer_and_free
+
+        push r8                     ; saving regs
+        push r9
+        push r10
+        push rcx
+        push rdx
+
+        mov rcx, buffer 
+        mov rdx, BUFFER_SIZE
+        movq xmm2, xmm0
+
+        call get_double_printf_arg_C_func
+
+        mov rsi, buffer
+        add rsi, rax                ; rax - count of written symbols
+        mov r8, rax
+
+        pop rdx
+        pop rcx
+        pop r10
+        pop r9
+        pop r8
+        
+
+        mov bl, 'g'                 ; to continue printf after
+        jmp write_one_symbol
+;-----------------------
+
+
+
 
 ;-----------------------
 ;checking double on specific values
@@ -509,36 +564,12 @@ signed_double_printf_arg:
 ;       rsi - curr buffer pos
 ;       rbp - sp in the beginning of the func (average rbp usage)
 ;destroy:       rax | rdi | bl |           
-;return value:  xmm0 - non-signed value of double argument
-;               r10 - num of next arg to printf
-;               r8 += num of characters written
+;return:  xmm0 - non-signed value of double argument
+;         r10 - num of next arg to printf
+;         r8 += num of characters written
 ;-----------------------
-check_if_double_inf_nan_signed:
-        cmp r10, 3
-        je .first_double_arg
-
-        cmp r10, 4
-        je .second_double_arg
-
-        cmp r10, 5
-        je .third_double_arg
-
-        movq xmm0, [rbp + r10 * 8]  ; if double is in stack
-        jmp .check_if_double_is_nan_inf_neg
-
-    .first_double_arg:
-        movq xmm0, xmm1
-        jmp .check_if_double_is_nan_inf_neg
-
-    .second_double_arg
-        movq xmm0, xmm2
-        jmp .check_if_double_is_nan_inf_neg
-
-    .third_double_arg
-        movq xmm0, xmm3
-
-    .check_if_double_is_nan_inf_neg:
-        inc r10
+check_if_double_inf_nan_signed_proc:
+        call get_double_printf_arg  ; getting double printf arg in xmm0
 
         movq rax, xmm0              ; moving bits of xmm0 to rax to change them
         mov rdi, [rel nan_bit_mask]
@@ -599,8 +630,53 @@ check_if_double_inf_nan_signed:
 
 
 ;-----------------------
+;moving double argument in xmm0 based on r10
+;entry: r10 - curr _my_printf argument offset
+;       r8  - curr characters written in buffer 
+;       rbp - sp in the beginning of the func (average rbp usage)
+;destroy:   
+;return:    xmm0 - double argument
+;           r10 - num of next arg to printf
+;-----------------------
+get_double_printf_arg:
+        cmp r10, 3
+        je .first_double_arg
+
+        cmp r10, 4
+        je .second_double_arg
+
+        cmp r10, 5
+        je .third_double_arg
+
+        movq xmm0, [rbp + r10 * 8]  ; if double is in stack
+        jmp .end_proc
+
+    .first_double_arg:
+        movq xmm0, xmm1
+        jmp .end_proc
+
+    .second_double_arg
+        movq xmm0, xmm2
+        jmp .end_proc
+
+    .third_double_arg
+        movq xmm0, xmm3
+
+    .end_proc:
+        inc r10
+        ret
+;-----------------------
+
+
+
+;-----------------------
 ;if there is no case in jump-table
 ;function writes '?'
+;entry: r8  - curr characters written in buffer 
+;       rsi - curr buffer pos
+;destroy:   
+;return:  r10 - num of next arg to printf
+;         r8 += num of characters written
 ;-----------------------
 unknown_printf_arg:
         mov [rsi], '?'
@@ -617,6 +693,11 @@ unknown_printf_arg:
 ; %%
 ;if there is %%
 ;function writes '%'
+;entry: r8  - curr characters written in buffer 
+;       rsi - curr buffer pos
+;destroy:   
+;return:  r10 - num of next arg to printf
+;         r8 += num of characters written
 ;-----------------------
 just_percent_printf:
         mov [rsi], '%'
@@ -683,16 +764,15 @@ print_buffer_and_free:
 
 section .data   
 
-STD_OUTPUT_HANDLE   equ -11
-BUFFER_SIZE         equ 100
+STD_OUTPUT_HANDLE           equ -11
+BUFFER_SIZE                 equ 100
+NAN_INF_STRING_LEN          equ 3
+COUNT_OF_SYMBOLS_AFTER_DOT  equ 6
 
 num dq 10.0
 
 first_bit_mask dq 1 << 63
-
 nan_bit_mask dq 011111111111b << 52
-
-
 negative_mask dq -1
 
 buffer          times BUFFER_SIZE db 0
@@ -700,8 +780,7 @@ buffer          times BUFFER_SIZE db 0
 buffer_for_num  times BUFFER_SIZE db 0   ; 10 is max len of num in C (not fo ocs, i don`t care about ocs)
 
 numbers_array   db "0123456789abcdef"
-
+printf_call_string  db "%g"
 nan_string      db "nan"
 inf_string      db "inf"
 
-NAN_INF_STRING_LEN  equ 3
